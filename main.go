@@ -5,6 +5,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"text/tabwriter"
+
+	"time"
+
+	"flag"
 
 	"github.com/s-gheldd/count-min-sketches/count"
 	"github.com/s-gheldd/count-min-sketches/countmin"
@@ -12,41 +17,56 @@ import (
 	"github.com/s-gheldd/count-min-sketches/stream"
 )
 
-const filePath = "data/numbers_10M100000.txt"
+var (
+	filePaths   = []string{"data/numbers_1M200.txt", "data/numbers_10M1000.txt", "data/numbers_10M100000.txt"}
+	sketchWidth uint32
+)
 
-// func main() {
-// 	in, err := os.Open(filePath)
-// 	if err != nil {
-// 		log.Fatal(err)
-// 	}
-// 	defer in.Close()
+func init() {
+	var w uint
+	flag.UintVar(&w, "w", 13, "the width used by the count-min-sketches")
 
-// 	scan := bufio.NewScanner(in)
-// 	var size, intRange uint32
-
-// 	scan.Scan()
-// 	fmt.Sscan(scan.Text(), &size, &intRange)
-
-// 	s := countmin.NewSketch(12, hash.Murmur(4))
-
-// 	for scan.Scan() {
-// 		num := hash.ToUint32(scan.Bytes())
-// 		s.Digest(num)
-// 	}
-
-// 	for index := uint32(1); index < intRange; index++ {
-// 		fmt.Println(index, "=>", s.GetCountMin(uint32(index)))
-// 	}
-// }
+	flag.Parse()
+	sketchWidth = uint32(w)
+}
 
 func main() {
+	murmurStats := make([]statisic, 0, 3)
+	knuthStats := make([]statisic, 0, 3)
 
-	absolutes := count.Count(filePath).First(100)
-	sketch := murmurMin(filePath)
+	for _, filePath := range filePaths {
+		mark1 := time.Now()
+		absolutes := count.Count(filePath).First(100)
+		mark2 := time.Now()
+		log.Println("Absolute count of ", filePath, " took: ", mark2.Sub(mark1))
 
-	stat := statistics(absolutes, sketch)
-	fmt.Printf("%+v\n", stat)
+		sketchKnuth, mark1, mark2 := sketch(filePath, hash.Knuth(4))
+		log.Println("count-min-sketch of ", filePath, " using Knuth hashes took: ", mark2.Sub(mark1))
 
+		sketchMurmur, mark1, mark2 := sketch(filePath, hash.Murmur(4))
+		log.Println("count-min-sketch of ", filePath, " using Murmur3 hashes took: ", mark2.Sub(mark1))
+
+		knuthStats = append(knuthStats, statistics(absolutes, sketchKnuth))
+		murmurStats = append(murmurStats, statistics(absolutes, sketchMurmur))
+
+		fmt.Println()
+	}
+	printStats(knuthStats, "Knuth")
+	printStats(murmurStats, "Murmur3")
+}
+
+func printStats(stats []statisic, hash string) {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.AlignRight|tabwriter.Debug)
+
+	fmt.Fprintf(w, "%s(w=%d):\n", hash, sketchWidth)
+	fmt.Fprintf(w, "data set\tmax. abs.\tavg. abs.\tmax. rel.\tavg. rel.\t# exact\n")
+
+	for i := 0; i < len(stats); i++ {
+		stat := stats[i]
+		fmt.Fprintf(w, "%s\t%d\t%d\t%.2f\t%.2f\t%d\n", filePaths[i], stat.maxAbs, stat.avgAbs, stat.maxRel, stat.avgRel, 100-stat.misses)
+	}
+	fmt.Fprintln(w)
+	w.Flush()
 }
 
 func statistics(topHundret *count.Counter, sketch *countmin.Sketch) statisic {
@@ -107,22 +127,7 @@ func absErr(count, guess uint32) uint32 {
 	}
 }
 
-func streamer(path string) (stream.Streamer, func() error) {
-	in, err := os.Open(filePath)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	scan := bufio.NewScanner(in)
-
-	scan.Scan()
-	scan.Text()
-	streamer := stream.NewScanStreamer(scan)
-
-	return streamer, in.Close
-}
-
-func murmurMin(filePath string) *countmin.Sketch {
+func sketch(filePath string, provider hash.Provider) (*countmin.Sketch, time.Time, time.Time) {
 
 	in, err := os.Open(filePath)
 	if err != nil {
@@ -136,11 +141,13 @@ func murmurMin(filePath string) *countmin.Sketch {
 	scan.Scan()
 	fmt.Sscan(scan.Text(), &size, &intRange)
 
-	sketch := countmin.NewSketch(14, hash.Murmur(4))
+	sketch := countmin.NewSketch(sketchWidth, provider)
 
+	before := time.Now()
 	for scan.Scan() {
 		num := stream.ToUint32(scan.Bytes())
 		sketch.Digest(num)
 	}
-	return sketch
+	after := time.Now()
+	return sketch, before, after
 }

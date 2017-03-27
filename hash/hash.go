@@ -1,6 +1,7 @@
 package hash
 
 import (
+	"math/big"
 	"math/rand"
 	"unsafe"
 )
@@ -50,5 +51,27 @@ func mur(seed uint32) func(key uint32) uint32 {
 		h1 *= m4
 		h1 ^= h1 >> 16
 		return h1
+	}
+}
+
+func Knuth(size int) Provider {
+	rand.Seed(1)
+	funcs := make([]Function, 0, size)
+	for i := 0; i < size; i++ {
+		seed := rand.Uint32()
+		bigInt := big.NewInt(int64(seed))
+
+		for !bigInt.ProbablyPrime(0) {
+			seed = rand.Uint32()
+			bigInt = big.NewInt(int64(seed))
+		}
+		funcs = append(funcs, knuth(seed))
+	}
+	return funcs
+}
+
+func knuth(seed uint32) func(key uint32) uint32 {
+	return func(key uint32) uint32 {
+		return seed * key
 	}
 }
