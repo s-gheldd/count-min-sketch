@@ -55,6 +55,7 @@ func main() {
 	printStats(murmurStats, "Murmur3")
 }
 
+// knuth better than murmur, more independent hash family?
 func printStats(stats []statisic, hash string) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.AlignRight|tabwriter.Debug)
 
