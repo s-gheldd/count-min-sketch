@@ -20,6 +20,7 @@ import (
 var (
 	filePaths   = []string{"data/numbers_1M200.txt", "data/numbers_10M1000.txt", "data/numbers_10M100000.txt"}
 	sketchWidth uint32
+	k           int
 	parallel    bool
 )
 
@@ -27,6 +28,7 @@ func init() {
 	var w uint
 	flag.UintVar(&w, "w", 13, "the width used by the count-min-sketches")
 	flag.BoolVar(&parallel, "p", false, "parallelize the filling of the sketches")
+	flag.IntVar(&k, "k", 4, "number of hash functions")
 
 	flag.Parse()
 	sketchWidth = uint32(w)
@@ -50,10 +52,10 @@ func runSerieal() {
 		mark2 := time.Now()
 		log.Println("Absolute count of ", filePath, " took: ", mark2.Sub(mark1))
 
-		sketchKnuth, mark1, mark2 := sketch(filePath, hash.Knuth(4))
+		sketchKnuth, mark1, mark2 := sketch(filePath, hash.Knuth(k))
 		log.Println("count-min-sketch of ", filePath, " using Knuth hashes took: ", mark2.Sub(mark1))
 
-		sketchMurmur, mark1, mark2 := sketch(filePath, hash.Murmur(4))
+		sketchMurmur, mark1, mark2 := sketch(filePath, hash.Murmur(k))
 		log.Println("count-min-sketch of ", filePath, " using Murmur3 hashes took: ", mark2.Sub(mark1))
 
 		knuthStats = append(knuthStats, statistics(absolutes, sketchKnuth))
@@ -74,10 +76,10 @@ func runParallel() {
 		mark2 := time.Now()
 		log.Println("Absolute count of ", filePath, " took: ", mark2.Sub(mark1))
 
-		sketchParallelKnuth, mark1, mark2 := sketchParallel(filePath, hash.Knuth(4))
+		sketchParallelKnuth, mark1, mark2 := sketchParallel(filePath, hash.Knuth(k))
 		log.Println("count-min-sketch of ", filePath, " using parallelKnuth hashes took: ", mark2.Sub(mark1))
 
-		sketchParallelMurmur, mark1, mark2 := sketchParallel(filePath, hash.Murmur(4))
+		sketchParallelMurmur, mark1, mark2 := sketchParallel(filePath, hash.Murmur(k))
 		log.Println("count-min-sketch of ", filePath, " using parallelMurmur hashes took: ", mark2.Sub(mark1))
 
 		parallelKnuthStats = append(parallelKnuthStats, statistics(absolutes, sketchParallelKnuth))
@@ -178,10 +180,19 @@ func sketch(filePath string, provider hash.Provider) (*countmin.Sketch, time.Tim
 	scan.Scan()
 	fmt.Sscan(scan.Text(), &size, &intRange)
 
-	before := time.Now()
+	nums := make([]uint32, size)
+	i := 0
+
 	for scan.Scan() {
 		num := stream.ToUint32(scan.Bytes())
-		sketch.Digest(num)
+		nums[i] = num
+		i++
+	}
+
+	before := time.Now()
+	for _, x := range nums {
+
+		sketch.Digest(x)
 	}
 	after := time.Now()
 	return sketch, before, after
@@ -189,21 +200,6 @@ func sketch(filePath string, provider hash.Provider) (*countmin.Sketch, time.Tim
 
 func sketchParallel(filePath string, provider hash.Provider) (*countmin.Sketch, time.Time, time.Time) {
 
-	sketch := countmin.NewSketch(sketchWidth, provider)
-	done := make(chan struct{}, len(sketch.Funcs))
-	before := time.Now()
-	for index := 0; index < len(sketch.Funcs); index++ {
-		go digestN(filePath, sketch, index, done)
-	}
-
-	for index := 0; index < len(sketch.Funcs); index++ {
-		<-done
-	}
-	after := time.Now()
-	return sketch, before, after
-}
-
-func digestN(filePath string, sketch *countmin.Sketch, i int, done chan struct{}) {
 	in, err := os.Open(filePath)
 	if err != nil {
 		log.Fatal(err)
@@ -215,9 +211,35 @@ func digestN(filePath string, sketch *countmin.Sketch, i int, done chan struct{}
 
 	scan.Scan()
 	fmt.Sscan(scan.Text(), &size, &intRange)
+
+	nums := make([]uint32, size)
+	i := 0
+
 	for scan.Scan() {
 		num := stream.ToUint32(scan.Bytes())
-		sketch.DigestN(num, i)
+		nums[i] = num
+		i++
+	}
+
+	sketch := countmin.NewSketch(sketchWidth, provider)
+	done := make(chan struct{}, len(sketch.Funcs))
+	before := time.Now()
+	for index := 0; index < len(sketch.Funcs); index++ {
+		go digestN(nums, sketch, index, done)
+	}
+
+	for index := 0; index < len(sketch.Funcs); index++ {
+		<-done
+	}
+	after := time.Now()
+	return sketch, before, after
+}
+
+func digestN(nums []uint32, sketch *countmin.Sketch, i int, done chan struct{}) {
+
+	for _, x := range nums {
+
+		sketch.DigestN(x, i)
 	}
 	done <- struct{}{}
 }
