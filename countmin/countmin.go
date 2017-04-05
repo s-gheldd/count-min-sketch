@@ -27,6 +27,11 @@ func (s *Sketch) Digest(a uint32) {
 	}
 }
 
+func (s *Sketch) DigestN(a uint32, i int) {
+	hash := s.Funcs[i](a)
+	s.Counts[i][hash>>(31-s.Width)]++
+}
+
 func (s *Sketch) GetCountMin(a uint32) uint32 {
 	counts := make([]uint32, len(s.Counts))
 	for i, f := range s.Funcs {
